@@ -1,78 +1,100 @@
+// functions/verify.js
+// Validates Turnstile token, returns a signed HMAC stream token
+
+const TOKEN_TTL_SECONDS = 300; // 5 minutes
+
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  // Parse incoming token from the frontend
+  // ── Custom header check (raises bar for direct API probing) ────────
+  if (request.headers.get('X-Requested-With') !== 'BetStream-Web') {
+    return jsonResponse({ success: false, error: 'Forbidden' }, 403);
+  }
+
+  // ── Parse body ─────────────────────────────────────────────────────
   let body;
   try {
     body = await request.json();
   } catch {
-    return jsonResponse({ success: false, error: "Invalid request body" }, 400);
+    return jsonResponse({ success: false, error: 'Invalid request body' }, 400);
   }
 
   const token = body?.token;
   if (!token) {
-    return jsonResponse({ success: false, error: "Missing token" }, 400);
+    return jsonResponse({ success: false, error: 'Missing token' }, 400);
   }
 
-  // Get secret key from env variable (set in CF Pages dashboard)
-  const secret = env.TURNSTILE_SECRET;
-  if (!secret) {
-    console.error("TURNSTILE_SECRET env var not set");
-    return jsonResponse({ success: false, error: "Server misconfiguration" }, 500);
+  // ── Check secrets are configured ──────────────────────────────────
+  if (!env.TURNSTILE_SECRET || !env.STREAM_HMAC_SECRET) {
+    console.error('Missing env vars: TURNSTILE_SECRET or STREAM_HMAC_SECRET');
+    return jsonResponse({ success: false, error: 'Server misconfiguration' }, 500);
   }
 
-  // Call Cloudflare's siteverify endpoint
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+
+  // ── Validate Turnstile token ───────────────────────────────────────
   const verifyRes = await fetch(
-    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+    'https://challenges.cloudflare.com/turnstile/v0/siteverify',
     {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        secret,
+        secret: env.TURNSTILE_SECRET,
         response: token,
-        // Optionally bind to client IP for extra security:
-        remoteip: request.headers.get("CF-Connecting-IP") ?? undefined,
+        remoteip: ip,
       }),
     }
   );
 
   const result = await verifyRes.json();
 
-  if (result.success) {
-    // Only returned after a valid Turnstile token — never in the HTML
-    const protectedData = {
-      revenue:    "$4.2M",
-      users:      "18,340",
-      conversion: "3.87%",
-      avgSession: "4m 12s",
-      churn:      "1.2%",
-      nps:        "72"
-    };
-    return jsonResponse({ success: true, data: protectedData });
-  } else {
-    // result["error-codes"] contains details e.g. "token-already-used"
+  if (!result.success) {
     return jsonResponse({
       success: false,
-      errors: result["error-codes"] ?? ["unknown"],
+      errors: result['error-codes'] ?? ['unknown'],
     }, 403);
   }
+
+  // ── Hostname check ─────────────────────────────────────────────────
+  if (result.hostname !== 'nurielwainstein.com') {
+    return jsonResponse({ success: false, error: 'Token hostname mismatch' }, 403);
+  }
+
+  // ── Issue signed stream token ──────────────────────────────────────
+  // Payload: IP + expiry timestamp
+  const expiry = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS;
+  const payload = `${ip}:${expiry}`;
+  const signature = await hmacSign(env.STREAM_HMAC_SECRET, payload);
+  const streamToken = btoa(`${payload}:${signature}`);
+
+  return jsonResponse({ success: true, streamToken });
 }
 
-// Block all non-POST methods
 export async function onRequest(context) {
-  if (context.request.method === "POST") {
-    return onRequestPost(context);
-  }
-  return jsonResponse({ success: false, error: "Method not allowed" }, 405);
+  if (context.request.method === 'POST') return onRequestPost(context);
+  return jsonResponse({ success: false, error: 'Method not allowed' }, 405);
+}
+
+// ── HMAC helpers ───────────────────────────────────────────────────
+async function hmacSign(secret, message) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false, ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
-      "Content-Type": "application/json",
-      // Prevent caching of auth responses
-      "Cache-Control": "no-store",
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
     },
   });
 }

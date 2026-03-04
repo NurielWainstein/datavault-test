@@ -1,434 +1,418 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>DataVault — Protected Data Feed</title>
+  <title>BetStream — Live Odds</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500&display=swap" rel="stylesheet">
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0a0a0a;
-      --surface: #111;
-      --border: #222;
-      --accent: #c8f135;
-      --accent2: #3df5b0;
-      --text: #e8e8e8;
-      --muted: #555;
-      --danger: #ff4d4d;
+      --bg:      #060810;
+      --surface: #0d1017;
+      --card:    #111520;
+      --border:  #1c2130;
+      --accent:  #00e5ff;
+      --green:   #00ff88;
+      --red:     #ff3b5c;
+      --gold:    #ffc947;
+      --text:    #e2e8f0;
+      --muted:   #4a5568;
     }
 
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'IBM Plex Mono', monospace;
+      font-family: 'Barlow', sans-serif;
       min-height: 100vh;
       overflow-x: hidden;
     }
 
-    /* Grid background */
-    body::before {
+    body::after {
       content: '';
       position: fixed;
       inset: 0;
-      background-image:
-        linear-gradient(rgba(200,241,53,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(200,241,53,0.03) 1px, transparent 1px);
-      background-size: 40px 40px;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      top: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 400px;
+      background: radial-gradient(ellipse, rgba(0,229,255,0.06) 0%, transparent 70%);
       pointer-events: none;
       z-index: 0;
     }
 
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
-      padding: 2rem;
-      position: relative;
-      z-index: 1;
-    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 1.5rem 2rem; position: relative; z-index: 1; }
 
     header {
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 1.5rem;
-      margin-bottom: 2.5rem;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 2rem;
     }
 
-    .logo {
-      font-family: 'Syne', sans-serif;
-      font-weight: 800;
-      font-size: 1.5rem;
-      letter-spacing: -0.02em;
-    }
-
+    .logo { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.8rem; letter-spacing: 0.05em; text-transform: uppercase; }
     .logo span { color: var(--accent); }
 
-    .status-badge {
-      font-size: 0.65rem;
-      padding: 0.3rem 0.7rem;
-      border: 1px solid var(--accent);
-      color: var(--accent);
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      animation: pulse 2s ease-in-out infinite;
-    }
+    .live-pill { display: flex; align-items: center; gap: 0.4rem; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--green); border: 1px solid rgba(0,255,136,0.3); padding: 0.3rem 0.8rem; }
+    .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: blink 1.2s ease-in-out infinite; }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
 
-    .page-title {
-      font-family: 'Syne', sans-serif;
-      font-size: 2.8rem;
-      font-weight: 800;
-      line-height: 1;
-      margin-bottom: 0.5rem;
-      letter-spacing: -0.03em;
-    }
+    .header-right { display: flex; align-items: center; gap: 1rem; }
+    #connection-status { font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    #connection-status.connected { color: var(--green); }
+    #connection-status.error { color: var(--red); }
 
-    .page-title em {
-      font-style: normal;
-      color: var(--accent);
-    }
+    /* GATE */
+    #gate { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; text-align: center; gap: 1.5rem; }
+    .gate-icon { font-size: 3rem; opacity: 0.4; }
+    .gate-title { font-family: 'Barlow Condensed', sans-serif; font-size: 2.5rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+    .gate-title span { color: var(--accent); }
+    .gate-sub { color: var(--muted); font-size: 0.9rem; max-width: 400px; line-height: 1.6; }
+    #gate-msg { font-size: 0.8rem; min-height: 1.2em; color: var(--red); }
+    #gate-msg.ok { color: var(--green); }
 
-    .subtitle {
-      color: var(--muted);
-      font-size: 0.8rem;
-      margin-bottom: 2.5rem;
-      letter-spacing: 0.05em;
-    }
+    /* DASHBOARD */
+    #dashboard { display: none; }
 
-    /* Data table */
-    .data-section {
-      margin-bottom: 3rem;
-    }
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+    .section-title { font-family: 'Barlow Condensed', sans-serif; font-size: 1rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+    #last-update { font-size: 0.7rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-    .section-label {
-      font-size: 0.65rem;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      color: var(--accent2);
-      margin-bottom: 1rem;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
+    /* SESSION BAR */
+    .session-bar { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); padding: 0.6rem 1rem; font-size: 0.75rem; margin-bottom: 1.5rem; }
+    .session-label { color: var(--muted); }
+    #session-timer { font-family: 'Barlow Condensed', sans-serif; font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+    #session-timer.warning { color: var(--gold); animation: blink 0.8s infinite; }
+    #session-timer.expired { color: var(--red); }
+    .reauth-btn { background: var(--accent); color: #000; border: none; padding: 0.3rem 1rem; font-family: 'Barlow Condensed', sans-serif; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; display: none; }
 
-    .section-label::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: var(--border);
-    }
+    /* TICKER */
+    .ticker-wrap { background: var(--surface); border: 1px solid var(--border); overflow: hidden; margin-bottom: 2rem; position: relative; }
+    .ticker-label { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); color: #000; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; padding: 0 0.8rem; display: flex; align-items: center; z-index: 2; }
+    .ticker-track { display: flex; gap: 2rem; padding: 0.6rem 0 0.6rem 100px; animation: ticker 30s linear infinite; white-space: nowrap; }
+    @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+    .ticker-item { font-size: 0.75rem; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 0.4rem; }
+    .ticker-item .t-name { color: var(--muted); }
+    .ticker-item .t-val { font-weight: 600; }
+    .ticker-item .t-up { color: var(--green); }
+    .ticker-item .t-down { color: var(--red); }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.8rem;
-    }
+    /* MATCH CARDS */
+    .matches-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); margin-bottom: 2rem; }
 
-    thead th {
-      text-align: left;
-      padding: 0.6rem 1rem;
-      color: var(--muted);
-      font-size: 0.65rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      border-bottom: 1px solid var(--border);
-    }
+    .match-card { background: var(--card); padding: 1.2rem 1.4rem; position: relative; overflow: hidden; transition: background 0.2s; }
+    .match-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); opacity: 0; transition: opacity 0.3s; }
+    .match-card.updated::before { opacity: 1; }
+    .match-card.updated { background: #0f1620; }
 
-    tbody tr {
-      border-bottom: 1px solid #1a1a1a;
-      transition: background 0.15s;
-    }
+    .match-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem; }
+    .match-league { font-size: 0.65rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+    .match-time { font-size: 0.65rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-    tbody tr:hover { background: #141414; }
+    .match-teams { font-family: 'Barlow Condensed', sans-serif; font-size: 1.3rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.6rem; }
+    .vs { font-size: 0.7rem; color: var(--muted); font-weight: 400; }
+    .score-badge { margin-left: auto; font-size: 1.1rem; color: var(--gold); letter-spacing: 0.05em; }
 
-    tbody td {
-      padding: 0.75rem 1rem;
-      color: var(--text);
-    }
+    .odds-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; }
 
-    .tag {
-      display: inline-block;
-      padding: 0.15rem 0.5rem;
-      font-size: 0.6rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      border-radius: 2px;
-    }
+    .odd-btn { background: var(--surface); border: 1px solid var(--border); padding: 0.5rem 0.4rem; text-align: center; cursor: default; transition: border-color 0.2s, background 0.2s; }
+    .odd-btn.up { border-color: rgba(0,255,136,0.4); background: rgba(0,255,136,0.04); animation: flashUp 0.6s ease-out; }
+    .odd-btn.down { border-color: rgba(255,59,92,0.4); background: rgba(255,59,92,0.04); animation: flashDown 0.6s ease-out; }
 
-    .tag-green { background: rgba(200,241,53,0.12); color: var(--accent); }
-    .tag-blue  { background: rgba(61,245,176,0.12); color: var(--accent2); }
-    .tag-red   { background: rgba(255,77,77,0.1);   color: var(--danger); }
+    @keyframes flashUp { 0% { background: rgba(0,255,136,0.15); } 100% { background: rgba(0,255,136,0.04); } }
+    @keyframes flashDown { 0% { background: rgba(255,59,92,0.15); } 100% { background: rgba(255,59,92,0.04); } }
 
-    .price { color: var(--accent); font-weight: 600; }
+    .odd-label { font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.25rem; }
+    .odd-value { font-family: 'Barlow Condensed', sans-serif; font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .odd-arrow { font-size: 0.65rem; margin-left: 0.2rem; }
+    .odd-btn.up .odd-value { color: var(--green); }
+    .odd-btn.down .odd-value { color: var(--red); }
 
-    /* Gate section */
-    #gate {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      padding: 2.5rem;
-      text-align: center;
-      position: relative;
-      overflow: hidden;
-    }
+    /* REAUTH OVERLAY */
+    #reauth-overlay { display: none; position: fixed; inset: 0; background: rgba(6,8,16,0.93); z-index: 100; align-items: center; justify-content: center; flex-direction: column; gap: 1.5rem; text-align: center; }
+    #reauth-overlay.show { display: flex; }
+    .reauth-title { font-family: 'Barlow Condensed', sans-serif; font-size: 2rem; font-weight: 800; text-transform: uppercase; color: var(--gold); }
+    .reauth-sub { color: var(--muted); font-size: 0.85rem; }
+    #reauth-msg { font-size: 0.8rem; color: var(--red); min-height: 1.2em; }
 
-    #gate::before {
-      content: 'PROTECTED';
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%) rotate(-15deg);
-      font-family: 'Syne', sans-serif;
-      font-size: 6rem;
-      font-weight: 800;
-      color: rgba(200,241,53,0.03);
-      pointer-events: none;
-      white-space: nowrap;
-    }
-
-    #gate h2 {
-      font-family: 'Syne', sans-serif;
-      font-size: 1.3rem;
-      font-weight: 700;
-      margin-bottom: 0.5rem;
-    }
-
-    #gate p {
-      color: var(--muted);
-      font-size: 0.75rem;
-      margin-bottom: 1.5rem;
-      line-height: 1.6;
-    }
-
-    .turnstile-wrap {
-      display: flex;
-      justify-content: center;
-      margin-bottom: 1.2rem;
-    }
-
-    #verify-btn {
-      background: var(--accent);
-      color: #000;
-      border: none;
-      padding: 0.75rem 2rem;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.8rem;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-
-    #verify-btn:hover { background: #d4ff3a; transform: translateY(-1px); }
-    #verify-btn:active { transform: translateY(0); }
-    #verify-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-
-    #result-msg {
-      margin-top: 1rem;
-      font-size: 0.75rem;
-      min-height: 1.2em;
-    }
-
-    .msg-ok  { color: var(--accent2); }
-    .msg-err { color: var(--danger); }
-
-    /* Secret data section (hidden until verified) */
-    #secret-data { display: none; }
-
-    #secret-data .secret-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 1px;
-      background: var(--border);
-      border: 1px solid var(--border);
-    }
-
-    .secret-card {
-      background: var(--surface);
-      padding: 1.2rem;
-    }
-
-    .secret-card .card-label {
-      font-size: 0.6rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 0.4rem;
-    }
-
-    .secret-card .card-value {
-      font-family: 'Syne', sans-serif;
-      font-size: 1.4rem;
-      font-weight: 700;
-      color: var(--accent);
-    }
-
-    footer {
-      margin-top: 4rem;
-      padding-top: 1.5rem;
-      border-top: 1px solid var(--border);
-      font-size: 0.65rem;
-      color: var(--muted);
-      display: flex;
-      justify-content: space-between;
-    }
+    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.65rem; color: var(--muted); display: flex; justify-content: space-between; }
   </style>
 </head>
 <body>
-<div class="container">
+<div class="wrap">
 
   <header>
-    <div class="logo">Data<span>Vault</span></div>
-    <div class="status-badge">● Live Feed</div>
+    <div class="logo">Bet<span>Stream</span></div>
+    <div class="header-right">
+      <div id="connection-status">Disconnected</div>
+      <div class="live-pill"><div class="live-dot"></div>Live</div>
+    </div>
   </header>
 
-  <h1 class="page-title">Public <em>Data</em><br>Feed</h1>
-  <p class="subtitle">// last updated: <span id="ts"></span> — cf-pages test environment</p>
-
-  <!-- Freely scrapeable public data -->
-  <div class="data-section">
-    <div class="section-label">Public Market Data</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Asset</th>
-          <th>Symbol</th>
-          <th>Price (USD)</th>
-          <th>24h Change</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr><td>Bitcoin</td><td>BTC</td><td class="price">$67,420.00</td><td style="color:var(--accent2)">+2.4%</td><td><span class="tag tag-green">Active</span></td></tr>
-        <tr><td>Ethereum</td><td>ETH</td><td class="price">$3,512.88</td><td style="color:var(--accent2)">+1.1%</td><td><span class="tag tag-green">Active</span></td></tr>
-        <tr><td>Solana</td><td>SOL</td><td class="price">$182.44</td><td style="color:var(--danger)">-0.8%</td><td><span class="tag tag-green">Active</span></td></tr>
-        <tr><td>Cardano</td><td>ADA</td><td class="price">$0.612</td><td style="color:var(--danger)">-1.2%</td><td><span class="tag tag-blue">Stable</span></td></tr>
-        <tr><td>Polkadot</td><td>DOT</td><td class="price">$9.87</td><td style="color:var(--accent2)">+0.5%</td><td><span class="tag tag-green">Active</span></td></tr>
-        <tr><td>Avalanche</td><td>AVAX</td><td class="price">$38.91</td><td style="color:var(--danger)">-3.1%</td><td><span class="tag tag-red">Volatile</span></td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="data-section">
-    <div class="section-label">Public Company Directory</div>
-    <table>
-      <thead>
-        <tr><th>Company</th><th>Industry</th><th>Founded</th><th>Employees</th><th>HQ</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Acme Corp</td><td>Manufacturing</td><td>1998</td><td>4,200</td><td>New York</td></tr>
-        <tr><td>NovaTech</td><td>Software</td><td>2011</td><td>870</td><td>Austin</td></tr>
-        <tr><td>BlueSky Logistics</td><td>Transport</td><td>2004</td><td>12,000</td><td>Chicago</td></tr>
-        <tr><td>GreenLeaf Bio</td><td>Biotech</td><td>2016</td><td>320</td><td>Boston</td></tr>
-        <tr><td>IronGrid Energy</td><td>Energy</td><td>2009</td><td>5,600</td><td>Houston</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Turnstile-protected section -->
-  <div class="section-label">Protected Analytics</div>
-
+  <!-- GATE -->
   <div id="gate">
-    <h2>Verification Required</h2>
-    <p>This section contains sensitive analytics data.<br>Complete the challenge below to unlock access.</p>
-    <div class="turnstile-wrap">
-      <div class="cf-turnstile"
-           data-sitekey="0x4AAAAAACmF0GGxj-O-E8fO"
-           data-theme="dark"
-           data-callback="onTurnstileSuccess">
-      </div>
+    <div class="gate-icon">🔒</div>
+    <div class="gate-title">Live Odds <span>Feed</span></div>
+    <div class="gate-sub">Complete the security check to access live betting odds.</div>
+    <div class="cf-turnstile"
+         data-sitekey="0x4AAAAAACmF0GGxj-O-E8fO"
+         data-theme="dark"
+         data-callback="onTurnstileSuccess">
     </div>
-    <button id="verify-btn" disabled onclick="verifyToken()">Unlock Data</button>
-    <div id="result-msg"></div>
+    <div id="gate-msg"></div>
   </div>
 
-  <!-- Secret data is NOT in the HTML — it is returned by /verify after token validation -->
-  <div id="secret-data"></div>
+  <!-- DASHBOARD -->
+  <div id="dashboard">
+
+    <div class="session-bar">
+      <span class="session-label">Session expires in</span>
+      <span id="session-timer">5:00</span>
+      <button class="reauth-btn" id="reauth-btn" onclick="showReauth()">Re-verify</button>
+    </div>
+
+    <div class="ticker-wrap">
+      <div class="ticker-label">Markets</div>
+      <div class="ticker-track" id="ticker-track"></div>
+    </div>
+
+    <div class="section-header">
+      <div class="section-title">Live Matches</div>
+      <div id="last-update">Waiting for data...</div>
+    </div>
+    <div class="matches-grid" id="matches-grid"></div>
+
+  </div>
 
   <footer>
-    <span>DataVault Test Environment — CF Pages</span>
-    <span>Turnstile Protected</span>
+    <span>BetStream — Demo Environment</span>
+    <span>Protected by Cloudflare Turnstile + SSE Token Auth</span>
   </footer>
+</div>
 
+<!-- Re-auth overlay -->
+<div id="reauth-overlay">
+  <div class="reauth-title">⚠ Session Expired</div>
+  <div class="reauth-sub">Your access token has expired. Re-verify to resume the live feed.</div>
+  <div class="cf-turnstile"
+       data-sitekey="0x4AAAAAACmF0GGxj-O-E8fO"
+       data-theme="dark"
+       data-callback="onReauthSuccess">
+  </div>
+  <div id="reauth-msg"></div>
 </div>
 
 <script>
-  document.getElementById('ts').textContent = new Date().toUTCString();
+  let eventSource = null;
+  let sessionInterval = null;
+  let sessionSeconds = 290;
+  let prevOdds = {};
 
-  let turnstileToken = null;
-
+  // ── Turnstile ──────────────────────────────────────────────────────
   function onTurnstileSuccess(token) {
-    turnstileToken = token;
-    document.getElementById('verify-btn').disabled = false;
+    setGateMsg('✓ Challenge passed. Connecting...', true);
+    verifyAndConnect(token, false);
   }
 
-  async function verifyToken() {
-    const btn = document.getElementById('verify-btn');
-    const msg = document.getElementById('result-msg');
+  function onReauthSuccess(token) {
+    document.getElementById('reauth-msg').textContent = 'Verifying...';
+    verifyAndConnect(token, true);
+  }
 
-    if (!turnstileToken) {
-      msg.textContent = 'Please complete the challenge first.';
-      msg.className = 'msg-err';
-      return;
-    }
-
-    btn.disabled = true;
-    btn.textContent = 'Verifying...';
-    msg.textContent = '';
-
+  // ── Verify → stream token ──────────────────────────────────────────
+  async function verifyAndConnect(token, isReauth) {
     try {
       const res = await fetch('/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: turnstileToken })
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'BetStream-Web'
+        },
+        body: JSON.stringify({ token })
       });
 
       const data = await res.json();
 
-      if (data.success) {
-        msg.textContent = '✓ Verified. Access granted.';
-        msg.className = 'msg-ok';
-        document.getElementById('gate').style.display = 'none';
-
-        // Data comes from the server — it was never in the HTML
-        const d = data.data;
-        const labels = {
-          revenue: 'Total Revenue', users: 'Active Users',
-          conversion: 'Conversion Rate', avgSession: 'Avg Session',
-          churn: 'Churn Rate', nps: 'NPS Score'
-        };
-        const cards = Object.entries(d).map(([key, val]) => `
-          <div class="secret-card">
-            <div class="card-label">${labels[key]}</div>
-            <div class="card-value">${val}</div>
-          </div>`).join('');
-
-        const container = document.getElementById('secret-data');
-        container.innerHTML = `
-          <div class="section-label" style="margin-top:1.5rem">Verified Analytics Feed</div>
-          <div class="secret-grid">${cards}</div>`;
-        container.style.display = 'block';
+      if (data.success && data.streamToken) {
+        if (isReauth) {
+          document.getElementById('reauth-overlay').classList.remove('show');
+          document.getElementById('reauth-msg').textContent = '';
+        }
+        openStream(data.streamToken);
       } else {
-        msg.textContent = '✗ Verification failed. Please refresh and try again.';
-        msg.className = 'msg-err';
-        btn.disabled = false;
-        btn.textContent = 'Unlock Data';
+        const msg = '✗ ' + (data.error || 'Verification failed.');
+        if (isReauth) document.getElementById('reauth-msg').textContent = msg;
+        else setGateMsg(msg, false);
       }
     } catch (e) {
-      msg.textContent = '✗ Network error. Try again.';
-      msg.className = 'msg-err';
-      btn.disabled = false;
-      btn.textContent = 'Unlock Data';
+      const msg = '✗ Network error. Try again.';
+      if (isReauth) document.getElementById('reauth-msg').textContent = msg;
+      else setGateMsg(msg, false);
     }
+  }
+
+  // ── SSE stream ─────────────────────────────────────────────────────
+  function openStream(token) {
+    if (eventSource) eventSource.close();
+    setStatus('Connecting...', '');
+
+    eventSource = new EventSource('/stream?token=' + encodeURIComponent(token));
+
+    eventSource.addEventListener('connected', () => {
+      setStatus('Connected', 'connected');
+      showDashboard();
+      startSessionTimer();
+    });
+
+    eventSource.addEventListener('odds', (e) => {
+      const data = JSON.parse(e.data);
+      renderMatches(data.matches);
+      renderTicker(data.matches);
+      document.getElementById('last-update').textContent =
+        'Updated ' + new Date().toLocaleTimeString();
+    });
+
+    eventSource.addEventListener('expired', () => {
+      eventSource.close();
+      setStatus('Session expired', 'error');
+      showReauth();
+    });
+
+    eventSource.onerror = () => setStatus('Disconnected', 'error');
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────
+  function renderMatches(matches) {
+    const grid = document.getElementById('matches-grid');
+    matches.forEach(match => {
+      const id = 'match-' + match.id;
+      let card = document.getElementById(id);
+      const isNew = !card;
+
+      if (isNew) {
+        card = document.createElement('div');
+        card.className = 'match-card';
+        card.id = id;
+        grid.appendChild(card);
+      }
+
+      const prev = prevOdds[match.id] || {};
+      const hDir = match.home > (prev.home||match.home) ? 'up' : match.home < (prev.home||match.home) ? 'down' : '';
+      const aDir = match.away > (prev.away||match.away) ? 'up' : match.away < (prev.away||match.away) ? 'down' : '';
+      const dDir = match.draw > (prev.draw||match.draw) ? 'up' : match.draw < (prev.draw||match.draw) ? 'down' : '';
+
+      const arrow = (dir) => dir === 'up'
+        ? `<span class="odd-arrow" style="color:var(--green)">▲</span>`
+        : dir === 'down'
+        ? `<span class="odd-arrow" style="color:var(--red)">▼</span>`
+        : '';
+
+      card.innerHTML = `
+        <div class="match-meta">
+          <span class="match-league">${match.league}</span>
+          <span class="match-time">${match.minute}'</span>
+        </div>
+        <div class="match-teams">
+          ${match.home_team} <span class="vs">vs</span> ${match.away_team}
+          <span class="score-badge">${match.score}</span>
+        </div>
+        <div class="odds-row">
+          <div class="odd-btn ${hDir}">
+            <div class="odd-label">Home</div>
+            <div class="odd-value">${match.home.toFixed(2)}${arrow(hDir)}</div>
+          </div>
+          <div class="odd-btn ${dDir}">
+            <div class="odd-label">Draw</div>
+            <div class="odd-value">${match.draw.toFixed(2)}${arrow(dDir)}</div>
+          </div>
+          <div class="odd-btn ${aDir}">
+            <div class="odd-label">Away</div>
+            <div class="odd-value">${match.away.toFixed(2)}${arrow(aDir)}</div>
+          </div>
+        </div>`;
+
+      if (!isNew && (hDir || aDir || dDir)) {
+        card.classList.add('updated');
+        setTimeout(() => card.classList.remove('updated'), 1000);
+      }
+
+      prevOdds[match.id] = { home: match.home, away: match.away, draw: match.draw };
+    });
+  }
+
+  function renderTicker(matches) {
+    const items = matches.map(m =>
+      `<span class="ticker-item">
+        <span class="t-name">${m.home_team} v ${m.away_team}</span>
+        <span class="t-val t-up">${m.home.toFixed(2)}</span>
+        <span class="t-val" style="color:var(--muted)">|</span>
+        <span class="t-val">${m.draw.toFixed(2)}</span>
+        <span class="t-val" style="color:var(--muted)">|</span>
+        <span class="t-val t-down">${m.away.toFixed(2)}</span>
+      </span>`
+    ).join('');
+    document.getElementById('ticker-track').innerHTML = items + items;
+  }
+
+  // ── Session timer ──────────────────────────────────────────────────
+  function startSessionTimer() {
+    sessionSeconds = 290;
+    clearInterval(sessionInterval);
+    sessionInterval = setInterval(() => {
+      sessionSeconds--;
+      const m = Math.floor(sessionSeconds / 60);
+      const s = sessionSeconds % 60;
+      const el = document.getElementById('session-timer');
+      el.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+      if (sessionSeconds <= 60) {
+        el.className = 'warning';
+        document.getElementById('reauth-btn').style.display = 'block';
+      }
+      if (sessionSeconds <= 0) {
+        clearInterval(sessionInterval);
+        el.className = 'expired';
+        showReauth();
+      }
+    }, 1000);
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────
+  function setGateMsg(msg, ok) {
+    const el = document.getElementById('gate-msg');
+    el.textContent = msg;
+    el.className = ok ? 'ok' : '';
+  }
+
+  function setStatus(text, cls) {
+    const el = document.getElementById('connection-status');
+    el.textContent = text;
+    el.className = cls;
+  }
+
+  function showDashboard() {
+    document.getElementById('gate').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+  }
+
+  function showReauth() {
+    if (eventSource) eventSource.close();
+    clearInterval(sessionInterval);
+    document.getElementById('reauth-overlay').classList.add('show');
   }
 </script>
 </body>
