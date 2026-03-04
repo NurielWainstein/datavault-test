@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DataVault — Protected Data Feed</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111;
+      --border: #222;
+      --accent: #c8f135;
+      --accent2: #3df5b0;
+      --text: #e8e8e8;
+      --muted: #555;
+      --danger: #ff4d4d;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Mono', monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(200,241,53,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(200,241,53,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 1.5rem;
+      margin-bottom: 2.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 1.5rem;
+      letter-spacing: -0.02em;
+    }
+
+    .logo span { color: var(--accent); }
+
+    .status-badge {
+      font-size: 0.65rem;
+      padding: 0.3rem 0.7rem;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .page-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 2.8rem;
+      font-weight: 800;
+      line-height: 1;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.03em;
+    }
+
+    .page-title em {
+      font-style: normal;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-bottom: 2.5rem;
+      letter-spacing: 0.05em;
+    }
+
+    /* Data table */
+    .data-section {
+      margin-bottom: 3rem;
+    }
+
+    .section-label {
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .section-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+
+    thead th {
+      text-align: left;
+      padding: 0.6rem 1rem;
+      color: var(--muted);
+      font-size: 0.65rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #1a1a1a;
+      transition: background 0.15s;
+    }
+
+    tbody tr:hover { background: #141414; }
+
+    tbody td {
+      padding: 0.75rem 1rem;
+      color: var(--text);
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      font-size: 0.6rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border-radius: 2px;
+    }
+
+    .tag-green { background: rgba(200,241,53,0.12); color: var(--accent); }
+    .tag-blue  { background: rgba(61,245,176,0.12); color: var(--accent2); }
+    .tag-red   { background: rgba(255,77,77,0.1);   color: var(--danger); }
+
+    .price { color: var(--accent); font-weight: 600; }
+
+    /* Gate section */
+    #gate {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 2.5rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #gate::before {
+      content: 'PROTECTED';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-15deg);
+      font-family: 'Syne', sans-serif;
+      font-size: 6rem;
+      font-weight: 800;
+      color: rgba(200,241,53,0.03);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #gate h2 {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.3rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    #gate p {
+      color: var(--muted);
+      font-size: 0.75rem;
+      margin-bottom: 1.5rem;
+      line-height: 1.6;
+    }
+
+    .turnstile-wrap {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 1.2rem;
+    }
+
+    #verify-btn {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      padding: 0.75rem 2rem;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    #verify-btn:hover { background: #d4ff3a; transform: translateY(-1px); }
+    #verify-btn:active { transform: translateY(0); }
+    #verify-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    #result-msg {
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      min-height: 1.2em;
+    }
+
+    .msg-ok  { color: var(--accent2); }
+    .msg-err { color: var(--danger); }
+
+    /* Secret data section (hidden until verified) */
+    #secret-data { display: none; }
+
+    #secret-data .secret-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+    }
+
+    .secret-card {
+      background: var(--surface);
+      padding: 1.2rem;
+    }
+
+    .secret-card .card-label {
+      font-size: 0.6rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+
+    .secret-card .card-value {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    footer {
+      margin-top: 4rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.65rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">Data<span>Vault</span></div>
+    <div class="status-badge">● Live Feed</div>
+  </header>
+
+  <h1 class="page-title">Public <em>Data</em><br>Feed</h1>
+  <p class="subtitle">// last updated: <span id="ts"></span> — cf-pages test environment</p>
+
+  <!-- Freely scrapeable public data -->
+  <div class="data-section">
+    <div class="section-label">Public Market Data</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Asset</th>
+          <th>Symbol</th>
+          <th>Price (USD)</th>
+          <th>24h Change</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Bitcoin</td><td>BTC</td><td class="price">$67,420.00</td><td style="color:var(--accent2)">+2.4%</td><td><span class="tag tag-green">Active</span></td></tr>
+        <tr><td>Ethereum</td><td>ETH</td><td class="price">$3,512.88</td><td style="color:var(--accent2)">+1.1%</td><td><span class="tag tag-green">Active</span></td></tr>
+        <tr><td>Solana</td><td>SOL</td><td class="price">$182.44</td><td style="color:var(--danger)">-0.8%</td><td><span class="tag tag-green">Active</span></td></tr>
+        <tr><td>Cardano</td><td>ADA</td><td class="price">$0.612</td><td style="color:var(--danger)">-1.2%</td><td><span class="tag tag-blue">Stable</span></td></tr>
+        <tr><td>Polkadot</td><td>DOT</td><td class="price">$9.87</td><td style="color:var(--accent2)">+0.5%</td><td><span class="tag tag-green">Active</span></td></tr>
+        <tr><td>Avalanche</td><td>AVAX</td><td class="price">$38.91</td><td style="color:var(--danger)">-3.1%</td><td><span class="tag tag-red">Volatile</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="data-section">
+    <div class="section-label">Public Company Directory</div>
+    <table>
+      <thead>
+        <tr><th>Company</th><th>Industry</th><th>Founded</th><th>Employees</th><th>HQ</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Acme Corp</td><td>Manufacturing</td><td>1998</td><td>4,200</td><td>New York</td></tr>
+        <tr><td>NovaTech</td><td>Software</td><td>2011</td><td>870</td><td>Austin</td></tr>
+        <tr><td>BlueSky Logistics</td><td>Transport</td><td>2004</td><td>12,000</td><td>Chicago</td></tr>
+        <tr><td>GreenLeaf Bio</td><td>Biotech</td><td>2016</td><td>320</td><td>Boston</td></tr>
+        <tr><td>IronGrid Energy</td><td>Energy</td><td>2009</td><td>5,600</td><td>Houston</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Turnstile-protected section -->
+  <div class="section-label">Protected Analytics</div>
+
+  <div id="gate">
+    <h2>Verification Required</h2>
+    <p>This section contains sensitive analytics data.<br>Complete the challenge below to unlock access.</p>
+    <div class="turnstile-wrap">
+      <div class="cf-turnstile"
+           data-sitekey="0x4AAAAAACmF0GGxj-O-E8fO"
+           data-theme="dark"
+           data-callback="onTurnstileSuccess">
+      </div>
+    </div>
+    <button id="verify-btn" disabled onclick="verifyToken()">Unlock Data</button>
+    <div id="result-msg"></div>
+  </div>
+
+  <div id="secret-data">
+    <div class="section-label" style="margin-top:1.5rem">Verified Analytics Feed</div>
+    <div class="secret-grid">
+      <div class="secret-card"><div class="card-label">Total Revenue</div><div class="card-value">$4.2M</div></div>
+      <div class="secret-card"><div class="card-label">Active Users</div><div class="card-value">18,340</div></div>
+      <div class="secret-card"><div class="card-label">Conversion Rate</div><div class="card-value">3.87%</div></div>
+      <div class="secret-card"><div class="card-label">Avg Session</div><div class="card-value">4m 12s</div></div>
+      <div class="secret-card"><div class="card-label">Churn Rate</div><div class="card-value">1.2%</div></div>
+      <div class="secret-card"><div class="card-label">NPS Score</div><div class="card-value">72</div></div>
+    </div>
+  </div>
+
+  <footer>
+    <span>DataVault Test Environment — CF Pages</span>
+    <span>Turnstile Protected</span>
+  </footer>
+
+</div>
+
+<script>
+  document.getElementById('ts').textContent = new Date().toUTCString();
+
+  let turnstileToken = null;
+
+  function onTurnstileSuccess(token) {
+    turnstileToken = token;
+    document.getElementById('verify-btn').disabled = false;
+  }
+
+  async function verifyToken() {
+    const btn = document.getElementById('verify-btn');
+    const msg = document.getElementById('result-msg');
+
+    if (!turnstileToken) {
+      msg.textContent = 'Please complete the challenge first.';
+      msg.className = 'msg-err';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Verifying...';
+    msg.textContent = '';
+
+    try {
+      const res = await fetch('/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: turnstileToken })
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        msg.textContent = '✓ Verified. Access granted.';
+        msg.className = 'msg-ok';
+        document.getElementById('gate').style.display = 'none';
+        document.getElementById('secret-data').style.display = 'block';
+      } else {
+        msg.textContent = '✗ Verification failed. Please refresh and try again.';
+        msg.className = 'msg-err';
+        btn.disabled = false;
+        btn.textContent = 'Unlock Data';
+      }
+    } catch (e) {
+      msg.textContent = '✗ Network error. Try again.';
+      msg.className = 'msg-err';
+      btn.disabled = false;
+      btn.textContent = 'Unlock Data';
+    }
+  }
+</script>
+</body>
+</html>
