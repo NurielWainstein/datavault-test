@@ -351,17 +351,8 @@
     <div id="result-msg"></div>
   </div>
 
-  <div id="secret-data">
-    <div class="section-label" style="margin-top:1.5rem">Verified Analytics Feed</div>
-    <div class="secret-grid">
-      <div class="secret-card"><div class="card-label">Total Revenue</div><div class="card-value">$4.2M</div></div>
-      <div class="secret-card"><div class="card-label">Active Users</div><div class="card-value">18,340</div></div>
-      <div class="secret-card"><div class="card-label">Conversion Rate</div><div class="card-value">3.87%</div></div>
-      <div class="secret-card"><div class="card-label">Avg Session</div><div class="card-value">4m 12s</div></div>
-      <div class="secret-card"><div class="card-label">Churn Rate</div><div class="card-value">1.2%</div></div>
-      <div class="secret-card"><div class="card-label">NPS Score</div><div class="card-value">72</div></div>
-    </div>
-  </div>
+  <!-- Secret data is NOT in the HTML — it is returned by /verify after token validation -->
+  <div id="secret-data"></div>
 
   <footer>
     <span>DataVault Test Environment — CF Pages</span>
@@ -407,7 +398,25 @@
         msg.textContent = '✓ Verified. Access granted.';
         msg.className = 'msg-ok';
         document.getElementById('gate').style.display = 'none';
-        document.getElementById('secret-data').style.display = 'block';
+
+        // Data comes from the server — it was never in the HTML
+        const d = data.data;
+        const labels = {
+          revenue: 'Total Revenue', users: 'Active Users',
+          conversion: 'Conversion Rate', avgSession: 'Avg Session',
+          churn: 'Churn Rate', nps: 'NPS Score'
+        };
+        const cards = Object.entries(d).map(([key, val]) => `
+          <div class="secret-card">
+            <div class="card-label">${labels[key]}</div>
+            <div class="card-value">${val}</div>
+          </div>`).join('');
+
+        const container = document.getElementById('secret-data');
+        container.innerHTML = `
+          <div class="section-label" style="margin-top:1.5rem">Verified Analytics Feed</div>
+          <div class="secret-grid">${cards}</div>`;
+        container.style.display = 'block';
       } else {
         msg.textContent = '✗ Verification failed. Please refresh and try again.';
         msg.className = 'msg-err';
@@ -424,4 +433,3 @@
 </script>
 </body>
 </html>
-<!-- deploy -->

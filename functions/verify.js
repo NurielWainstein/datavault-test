@@ -39,7 +39,16 @@ export async function onRequestPost(context) {
   const result = await verifyRes.json();
 
   if (result.success) {
-    return jsonResponse({ success: true });
+    // Only returned after a valid Turnstile token — never in the HTML
+    const protectedData = {
+      revenue:    "$4.2M",
+      users:      "18,340",
+      conversion: "3.87%",
+      avgSession: "4m 12s",
+      churn:      "1.2%",
+      nps:        "72"
+    };
+    return jsonResponse({ success: true, data: protectedData });
   } else {
     // result["error-codes"] contains details e.g. "token-already-used"
     return jsonResponse({
