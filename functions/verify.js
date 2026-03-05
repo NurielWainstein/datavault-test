@@ -20,49 +20,12 @@
 // Requires Cloudflare KV binding: NONCE_STORE
 
 const TOKEN_TTL_SECONDS    = 300;
-const NONCE_TTL_SECONDS    = 120;  // nonce expires if unused within 2 minutes
 const MIN_MOUSE_DIST_PX    = 80;   // must match client threshold
 const PROOF_TS_TOLERANCE_S = 30;   // proof timestamp must be within 30s of server time
 
 export async function onRequest(context) {
-  const { request } = context;
-  const url = new URL(request.url);
-
-  if (url.pathname.endsWith('/nonce') && request.method === 'GET') {
-    return handleNonce(context);
-  }
-  if (request.method === 'POST') {
-    return handleVerify(context);
-  }
+  if (context.request.method === 'POST') return handleVerify(context);
   return jsonResponse({ success: false, error: 'Method not allowed' }, 405);
-}
-
-// ── GET /nonce ─────────────────────────────────────────────────────
-// Issues a 32-byte random nonce stored in KV with the requester's IP.
-// The client uses it as an HMAC key to sign its behaviour proof.
-// One-time use — deleted the moment /verify consumes it.
-async function handleNonce(context) {
-  const { request, env } = context;
-
-  if (request.headers.get('X-Requested-With') !== 'BetStream-Web') {
-    return jsonResponse({ success: false, error: 'Forbidden' }, 403);
-  }
-
-  if (!env.NONCE_STORE) {
-    return jsonResponse({ success: false, error: 'Server misconfiguration' }, 500);
-  }
-
-  const raw   = crypto.getRandomValues(new Uint8Array(32));
-  const nonce = Array.from(raw).map(b => b.toString(16).padStart(2, '0')).join('');
-  const ip    = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-
-  await env.NONCE_STORE.put(
-    `nonce:${nonce}`,
-    JSON.stringify({ issuedAt: Math.floor(Date.now() / 1000), ip }),
-    { expirationTtl: NONCE_TTL_SECONDS }
-  );
-
-  return jsonResponse({ nonce }, 200);
 }
 
 // ── POST /verify ───────────────────────────────────────────────────
