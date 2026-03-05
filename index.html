@@ -138,10 +138,9 @@
     @keyframes flashDown { 0% { background: rgba(255,59,92,0.15); } 100% { background: rgba(255,59,92,0.04); } }
 
     .odd-label { font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.25rem; }
-    .odd-value { font-family: 'Barlow Condensed', sans-serif; font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .odd-arrow { font-size: 0.65rem; margin-left: 0.2rem; }
-    .odd-btn.up .odd-value { color: var(--green); }
-    .odd-btn.down .odd-value { color: var(--red); }
+    .odd-canvas { display: block; image-rendering: pixelated; }
+    .odd-btn.up .odd-canvas { filter: drop-shadow(0 0 4px rgba(0,255,136,0.3)); }
+    .odd-btn.down .odd-canvas { filter: drop-shadow(0 0 4px rgba(255,59,92,0.3)); }
 
     /* REAUTH OVERLAY */
     #reauth-overlay { display: none; position: fixed; inset: 0; background: rgba(6,8,16,0.93); z-index: 100; align-items: center; justify-content: center; flex-direction: column; gap: 1.5rem; text-align: center; }
@@ -296,6 +295,38 @@
     eventSource.onerror = () => setStatus('Disconnected', 'error');
   }
 
+  // ── Canvas odd rendering ───────────────────────────────────────────
+  // Odds are drawn onto <canvas> so page.content() / BeautifulSoup
+  // sees only <canvas class="odd-canvas"> — no readable text in the DOM.
+  function drawOdd(canvas, value, dir) {
+    const dpr = window.devicePixelRatio || 1;
+    const W = 90, H = 36;
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    // Arrow glyph + color
+    const color = dir === 'up'
+      ? getComputedStyle(document.documentElement).getPropertyValue('--green').trim()
+      : dir === 'down'
+      ? getComputedStyle(document.documentElement).getPropertyValue('--red').trim()
+      : getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
+
+    const arrow = dir === 'up' ? ' ▲' : dir === 'down' ? ' ▼' : '';
+    const text  = value.toFixed(2) + arrow;
+
+    ctx.font = `700 22px 'Barlow Condensed', sans-serif`;
+    ctx.fillStyle = color;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, W / 2, H / 2);
+  }
+
   // ── Render ─────────────────────────────────────────────────────────
   function renderMatches(matches) {
     const grid = document.getElementById('matches-grid');
@@ -316,12 +347,6 @@
       const aDir = match.away > (prev.away||match.away) ? 'up' : match.away < (prev.away||match.away) ? 'down' : '';
       const dDir = match.draw > (prev.draw||match.draw) ? 'up' : match.draw < (prev.draw||match.draw) ? 'down' : '';
 
-      const arrow = (dir) => dir === 'up'
-        ? `<span class="odd-arrow" style="color:var(--green)">▲</span>`
-        : dir === 'down'
-        ? `<span class="odd-arrow" style="color:var(--red)">▼</span>`
-        : '';
-
       card.innerHTML = `
         <div class="match-meta">
           <span class="match-league">${match.league}</span>
@@ -334,17 +359,23 @@
         <div class="odds-row">
           <div class="odd-btn ${hDir}">
             <div class="odd-label">Home</div>
-            <div class="odd-value">${match.home.toFixed(2)}${arrow(hDir)}</div>
+            <canvas class="odd-canvas" aria-label="Home odds ${match.home.toFixed(2)}"></canvas>
           </div>
           <div class="odd-btn ${dDir}">
             <div class="odd-label">Draw</div>
-            <div class="odd-value">${match.draw.toFixed(2)}${arrow(dDir)}</div>
+            <canvas class="odd-canvas" aria-label="Draw odds ${match.draw.toFixed(2)}"></canvas>
           </div>
           <div class="odd-btn ${aDir}">
             <div class="odd-label">Away</div>
-            <div class="odd-value">${match.away.toFixed(2)}${arrow(aDir)}</div>
+            <canvas class="odd-canvas" aria-label="Away odds ${match.away.toFixed(2)}"></canvas>
           </div>
         </div>`;
+
+      // Draw odds onto canvases — values never touch the DOM as text
+      const [hCanvas, dCanvas, aCanvas] = card.querySelectorAll('.odd-canvas');
+      drawOdd(hCanvas, match.home, hDir);
+      drawOdd(dCanvas, match.draw, dDir);
+      drawOdd(aCanvas, match.away, aDir);
 
       if (!isNew && (hDir || aDir || dDir)) {
         card.classList.add('updated');
