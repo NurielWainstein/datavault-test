@@ -294,6 +294,7 @@
   // Signed with HMAC(nonce, payload) — server validates signature,
   // dist threshold, and timestamp freshness. Nonce is one-time use.
   async function buildBehaviourProof() {
+    if (!_bev.nonce) throw new Error('Nonce not available');
     const dist = Math.floor(_bev.mouseDist);
     const ts   = Math.floor(Date.now() / 1000);
     const payload = `moved:1|dist:${dist}|ts:${ts}`;
@@ -327,6 +328,17 @@
       // Build and attach behaviour proof (skipped on reauth — already proven)
       let behaviourProof = null;
       if (!isReauth) {
+        // Wait up to 5s for the /nonce fetch (triggered by mouse movement) to complete.
+        // Without this, Turnstile can resolve before _bev.nonce is set, causing a
+        // null-nonce proof that the server always rejects ("Incomplete behaviour proof").
+        const deadline = Date.now() + 5000;
+        while (!_bev.nonce && Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 50));
+        }
+        if (!_bev.nonce) {
+          setGateMsg('✗ Security check not ready. Move your mouse and try again.', false);
+          return;
+        }
         behaviourProof = await buildBehaviourProof();
       }
 
