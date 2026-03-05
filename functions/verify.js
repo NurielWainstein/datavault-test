@@ -1,5 +1,8 @@
 // functions/verify.js
 // Validates Turnstile token, returns a signed HMAC stream token
+// AND a per-session AES-GCM key derived from HMAC(STREAM_HMAC_SECRET, token)
+// The session key is transmitted once over TLS and held only in JS memory —
+// it is never stored in the DOM, cookies, or localStorage.
 
 const TOKEN_TTL_SECONDS = 300; // 5 minutes
 
@@ -61,13 +64,21 @@ export async function onRequestPost(context) {
   }
 
   // ── Issue signed stream token ──────────────────────────────────────
-  // Payload: IP + expiry timestamp
   const expiry = Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS;
   const payload = `${ip}:${expiry}`;
   const signature = await hmacSign(env.STREAM_HMAC_SECRET, payload);
   const streamToken = btoa(`${payload}:${signature}`);
 
-  return jsonResponse({ success: true, streamToken });
+  // ── Derive per-session AES-GCM key ────────────────────────────────
+  // Key = HMAC-SHA256(STREAM_HMAC_SECRET, "session-key:" + streamToken)
+  // Server can re-derive this at stream time from the validated token —
+  // no key storage needed. The client receives it once over TLS.
+  const sessionKey = await hmacSign(
+    env.STREAM_HMAC_SECRET,
+    'session-key:' + streamToken
+  );
+
+  return jsonResponse({ success: true, streamToken, sessionKey });
 }
 
 export async function onRequest(context) {

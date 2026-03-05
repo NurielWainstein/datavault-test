@@ -1,9 +1,14 @@
 // functions/stream.js
-// SSE endpoint — validates HMAC stream token, pushes live mock odds
+// SSE endpoint — validates HMAC stream token, pushes AES-GCM encrypted odds
+//
+// Each "odds" event payload is: base64( IV[12 bytes] || AES-GCM-ciphertext )
+// The AES key is derived from HMAC(secret, "session-key:" + rawToken) —
+// the same derivation used in verify.js, so no key storage is needed.
+// Without the session key (which is only sent once over TLS in /verify),
+// an intercepted SSE stream is unreadable ciphertext.
 
 const TOKEN_TTL_SECONDS = 300;
 
-// Mock match data — seed state
 const MATCHES = [
   { id: 1, league: 'Premier League', home_team: 'Arsenal',   away_team: 'Chelsea',    score: '1 - 0', minute: 34, home: 2.10, draw: 3.40, away: 3.80 },
   { id: 2, league: 'Premier League', home_team: 'Liverpool', away_team: 'Man City',   score: '0 - 0', minute: 67, home: 2.50, draw: 3.10, away: 2.90 },
@@ -20,36 +25,46 @@ export async function onRequest(context) {
     return new Response('Method not allowed', { status: 405 });
   }
 
-  // ── Extract and validate stream token ─────────────────────────────
   const url = new URL(request.url);
   const rawToken = url.searchParams.get('token');
 
-  if (!rawToken) {
-    return new Response('Missing token', { status: 401 });
-  }
-
-  if (!env.STREAM_HMAC_SECRET) {
-    return new Response('Server misconfiguration', { status: 500 });
-  }
+  if (!rawToken) return new Response('Missing token', { status: 401 });
+  if (!env.STREAM_HMAC_SECRET) return new Response('Server misconfiguration', { status: 500 });
 
   const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
   const validation = await validateToken(rawToken, env.STREAM_HMAC_SECRET, ip);
 
-  if (!validation.valid) {
-    return new Response(validation.reason, { status: 403 });
-  }
+  if (!validation.valid) return new Response(validation.reason, { status: 403 });
+
+  // ── Derive the same session key that verify.js issued ─────────────
+  // Re-derive from the validated raw token — no storage needed.
+  const sessionKeyHex = await hmacSign(env.STREAM_HMAC_SECRET, 'session-key:' + rawToken);
+  const sessionKey = await importAesKey(sessionKeyHex);
 
   // ── Open SSE stream ────────────────────────────────────────────────
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
   const enc = new TextEncoder();
 
-  const send = (event, data) => {
+  const sendPlain = (event, data) => {
     writer.write(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
   };
 
-  // Start streaming in background
-  streamOdds(writer, enc, send, validation.expiry).catch(() => {});
+  const sendEncrypted = async (event, data) => {
+    const pt = enc.encode(JSON.stringify(data));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, sessionKey, pt);
+
+    // Combine IV + ciphertext, base64-encode
+    const combined = new Uint8Array(12 + ct.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(ct), 12);
+    const b64 = btoa(String.fromCharCode(...combined));
+
+    writer.write(enc.encode(`event: ${event}\ndata: ${b64}\n\n`));
+  };
+
+  streamOdds(writer, sendPlain, sendEncrypted, validation.expiry).catch(() => {});
 
   return new Response(readable, {
     headers: {
@@ -61,90 +76,78 @@ export async function onRequest(context) {
   });
 }
 
-async function streamOdds(writer, enc, send, tokenExpiry) {
-  // Clone match state for this session (mutations don't affect other sessions)
+async function streamOdds(writer, sendPlain, sendEncrypted, tokenExpiry) {
   const matches = MATCHES.map(m => ({ ...m }));
 
-  // Confirm connection
-  send('connected', { message: 'Stream open' });
+  // connected event is plain — it carries no sensitive data
+  sendPlain('connected', { message: 'Stream open' });
 
   let tick = 0;
 
   while (true) {
-    // Check if token has expired server-side
     const now = Math.floor(Date.now() / 1000);
     if (now >= tokenExpiry) {
-      send('expired', { message: 'Token expired. Re-verify to continue.' });
+      sendPlain('expired', { message: 'Token expired. Re-verify to continue.' });
       break;
     }
 
-    // Update mock odds — small random fluctuations
     matches.forEach(match => {
       match.home = jitter(match.home, 0.05, 1.05, 15.0);
       match.draw = jitter(match.draw, 0.04, 2.00, 12.0);
       match.away = jitter(match.away, 0.06, 1.05, 20.0);
-
-      // Advance match minute every ~10 ticks
       if (tick % 10 === 0 && match.minute < 90) {
         match.minute = Math.min(90, match.minute + 1);
       }
     });
 
-    send('odds', { matches });
+    // Odds are encrypted — intercepting the SSE stream yields only base64 ciphertext
+    await sendEncrypted('odds', { matches });
 
     tick++;
-    await sleep(1500); // push update every 1.5 seconds
+    await sleep(1500);
   }
 
   try { writer.close(); } catch {}
 }
 
-// ── Token validation ───────────────────────────────────────────────
+// ── Token validation (unchanged) ───────────────────────────────────
 async function validateToken(rawToken, secret, requestIp) {
   let decoded;
-  try {
-    decoded = atob(rawToken);
-  } catch {
-    return { valid: false, reason: 'Malformed token' };
-  }
+  try { decoded = atob(rawToken); }
+  catch { return { valid: false, reason: 'Malformed token' }; }
 
-  // Format: "ip:expiry:signature"
   const lastColon = decoded.lastIndexOf(':');
   const secondLastColon = decoded.lastIndexOf(':', lastColon - 1);
 
-  if (lastColon === -1 || secondLastColon === -1) {
+  if (lastColon === -1 || secondLastColon === -1)
     return { valid: false, reason: 'Invalid token format' };
-  }
 
   const signature = decoded.slice(lastColon + 1);
-  const payload = decoded.slice(0, lastColon);
-  const [tokenIp, expiryStr] = [
-    decoded.slice(0, secondLastColon),
-    decoded.slice(secondLastColon + 1, lastColon),
-  ];
+  const payload   = decoded.slice(0, lastColon);
+  const tokenIp   = decoded.slice(0, secondLastColon);
+  const expiryStr = decoded.slice(secondLastColon + 1, lastColon);
 
-  // Check expiry
   const expiry = parseInt(expiryStr);
   if (isNaN(expiry)) return { valid: false, reason: 'Invalid token expiry' };
 
   const now = Math.floor(Date.now() / 1000);
   if (now >= expiry) return { valid: false, reason: 'Token expired' };
 
-  // Check IP binding
-  if (tokenIp !== requestIp) {
-    return { valid: false, reason: 'IP mismatch' };
-  }
+  if (tokenIp !== requestIp) return { valid: false, reason: 'IP mismatch' };
 
-  // Verify HMAC signature
   const expectedSig = await hmacSign(secret, payload);
-  if (!timingSafeEqual(signature, expectedSig)) {
+  if (!timingSafeEqual(signature, expectedSig))
     return { valid: false, reason: 'Invalid token signature' };
-  }
 
   return { valid: true, expiry };
 }
 
-// ── Helpers ────────────────────────────────────────────────────────
+// ── Crypto helpers ─────────────────────────────────────────────────
+async function importAesKey(hexKey) {
+  const bytes = new Uint8Array(hexKey.match(/.{2}/g).map(b => parseInt(b, 16)));
+  return crypto.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, false, ['encrypt']);
+}
+
 function jitter(value, maxDelta, min, max) {
   const delta = (Math.random() - 0.5) * 2 * maxDelta;
   return Math.max(min, Math.min(max, Math.round((value + delta) * 100) / 100));
@@ -165,12 +168,9 @@ async function hmacSign(secret, message) {
   return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Timing-safe string comparison to prevent timing attacks
 function timingSafeEqual(a, b) {
   if (a.length !== b.length) return false;
   let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }

@@ -101,16 +101,7 @@
     #session-timer.expired { color: var(--red); }
     .reauth-btn { background: var(--accent); color: #000; border: none; padding: 0.3rem 1rem; font-family: 'Barlow Condensed', sans-serif; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; display: none; }
 
-    /* TICKER */
-    .ticker-wrap { background: var(--surface); border: 1px solid var(--border); overflow: hidden; margin-bottom: 2rem; position: relative; }
-    .ticker-label { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); color: #000; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; padding: 0 0.8rem; display: flex; align-items: center; z-index: 2; }
-    .ticker-track { display: flex; gap: 2rem; padding: 0.6rem 0 0.6rem 100px; animation: ticker 30s linear infinite; white-space: nowrap; }
-    @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-    .ticker-item { font-size: 0.75rem; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 0.4rem; }
-    .ticker-item .t-name { color: var(--muted); }
-    .ticker-item .t-val { font-weight: 600; }
-    .ticker-item .t-up { color: var(--green); }
-    .ticker-item .t-down { color: var(--red); }
+    /* TICKER — removed: was leaking odds as plain DOM text */
 
     /* MATCH CARDS */
     .matches-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); margin-bottom: 2rem; }
@@ -185,10 +176,7 @@
       <button class="reauth-btn" id="reauth-btn" onclick="showReauth()">Re-verify</button>
     </div>
 
-    <div class="ticker-wrap">
-      <div class="ticker-label">Markets</div>
-      <div class="ticker-track" id="ticker-track"></div>
-    </div>
+    <!-- Ticker removed: was leaking all odds as plain DOM text -->
 
     <div class="section-header">
       <div class="section-title">Live Matches</div>
@@ -221,6 +209,7 @@
   let sessionInterval = null;
   let sessionSeconds = 290;
   let prevOdds = {};
+  let _sessionCryptoKey = null; // AES-GCM key — lives only in JS memory, never in DOM
 
   // ── Turnstile ──────────────────────────────────────────────────────
   function onTurnstileSuccess(token) {
@@ -233,7 +222,11 @@
     verifyAndConnect(token, true);
   }
 
-  // ── Verify → stream token ──────────────────────────────────────────
+  // ── Verify → stream token + session key ───────────────────────────
+  // /verify now returns { streamToken, sessionKey } where sessionKey is
+  // a hex-encoded 256-bit AES-GCM key derived server-side from HMAC.
+  // The key is transmitted once over TLS and then held only in memory —
+  // it never touches the DOM, localStorage, or any attribute.
   async function verifyAndConnect(token, isReauth) {
     try {
       const res = await fetch('/verify', {
@@ -247,7 +240,16 @@
 
       const data = await res.json();
 
-      if (data.success && data.streamToken) {
+      if (data.success && data.streamToken && data.sessionKey) {
+        // Import raw key bytes into WebCrypto — after this the raw hex is GC'd
+        const keyBytes = hexToBytes(data.sessionKey);
+        _sessionCryptoKey = await crypto.subtle.importKey(
+          'raw', keyBytes,
+          { name: 'AES-GCM' },
+          false,         // not extractable — can't be read back out of WebCrypto
+          ['decrypt']
+        );
+
         if (isReauth) {
           document.getElementById('reauth-overlay').classList.remove('show');
           document.getElementById('reauth-msg').textContent = '';
@@ -265,6 +267,21 @@
     }
   }
 
+  // ── SSE decryption ─────────────────────────────────────────────────
+  // Each SSE odds message is: base64( IV[12 bytes] || AES-GCM-ciphertext )
+  // Without the session key, intercepted SSE data is unreadable ciphertext.
+  async function decryptPayload(b64) {
+    const raw = base64ToBytes(b64);
+    const iv   = raw.slice(0, 12);
+    const ct   = raw.slice(12);
+    const pt   = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      _sessionCryptoKey,
+      ct
+    );
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+
   // ── SSE stream ─────────────────────────────────────────────────────
   function openStream(token) {
     if (eventSource) eventSource.close();
@@ -278,12 +295,17 @@
       startSessionTimer();
     });
 
-    eventSource.addEventListener('odds', (e) => {
-      const data = JSON.parse(e.data);
-      renderMatches(data.matches);
-      renderTicker(data.matches);
-      document.getElementById('last-update').textContent =
-        'Updated ' + new Date().toLocaleTimeString();
+    eventSource.addEventListener('odds', async (e) => {
+      try {
+        const data = await decryptPayload(e.data);
+        renderMatches(data.matches);
+        document.getElementById('last-update').textContent =
+          'Updated ' + new Date().toLocaleTimeString();
+      } catch {
+        // Decryption failure — key mismatch or tampered payload, close stream
+        eventSource.close();
+        setStatus('Decryption error', 'error');
+      }
     });
 
     eventSource.addEventListener('expired', () => {
@@ -293,6 +315,21 @@
     });
 
     eventSource.onerror = () => setStatus('Disconnected', 'error');
+  }
+
+  // ── Crypto helpers ─────────────────────────────────────────────────
+  function hexToBytes(hex) {
+    const arr = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < arr.length; i++)
+      arr[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    return arr;
+  }
+
+  function base64ToBytes(b64) {
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr;
   }
 
   // ── Canvas odd rendering ───────────────────────────────────────────
@@ -359,15 +396,15 @@
         <div class="odds-row">
           <div class="odd-btn ${hDir}">
             <div class="odd-label">Home</div>
-            <canvas class="odd-canvas" aria-label="Home odds ${match.home.toFixed(2)}"></canvas>
+            <canvas class="odd-canvas"></canvas>
           </div>
           <div class="odd-btn ${dDir}">
             <div class="odd-label">Draw</div>
-            <canvas class="odd-canvas" aria-label="Draw odds ${match.draw.toFixed(2)}"></canvas>
+            <canvas class="odd-canvas"></canvas>
           </div>
           <div class="odd-btn ${aDir}">
             <div class="odd-label">Away</div>
-            <canvas class="odd-canvas" aria-label="Away odds ${match.away.toFixed(2)}"></canvas>
+            <canvas class="odd-canvas"></canvas>
           </div>
         </div>`;
 
@@ -384,20 +421,6 @@
 
       prevOdds[match.id] = { home: match.home, away: match.away, draw: match.draw };
     });
-  }
-
-  function renderTicker(matches) {
-    const items = matches.map(m =>
-      `<span class="ticker-item">
-        <span class="t-name">${m.home_team} v ${m.away_team}</span>
-        <span class="t-val t-up">${m.home.toFixed(2)}</span>
-        <span class="t-val" style="color:var(--muted)">|</span>
-        <span class="t-val">${m.draw.toFixed(2)}</span>
-        <span class="t-val" style="color:var(--muted)">|</span>
-        <span class="t-val t-down">${m.away.toFixed(2)}</span>
-      </span>`
-    ).join('');
-    document.getElementById('ticker-track').innerHTML = items + items;
   }
 
   // ── Session timer ──────────────────────────────────────────────────
