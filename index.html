@@ -86,6 +86,19 @@
     #gate-msg { font-size: 0.8rem; min-height: 1.2em; color: var(--red); }
     #gate-msg.ok { color: var(--green); }
 
+    /* BEHAVIOUR CHECKLIST */
+    #behaviour-checks {
+      display: flex; flex-direction: column; align-items: flex-start;
+      gap: 0.5rem; padding: 1rem 1.4rem;
+      background: var(--surface); border: 1px solid var(--border);
+      font-size: 0.78rem; min-width: 260px;
+    }
+    .bcheck { display: flex; align-items: center; gap: 0.6rem; color: var(--muted); transition: color 0.3s; }
+    .bcheck.done { color: var(--green); }
+    .bcheck-icon { font-size: 0.9rem; width: 1.1rem; text-align: center; }
+    #turnstile-wrap { opacity: 0; pointer-events: none; transition: opacity 0.4s; }
+    #turnstile-wrap.ready { opacity: 1; pointer-events: auto; }
+
     /* DASHBOARD */
     #dashboard { display: none; }
 
@@ -159,10 +172,19 @@
     <div class="gate-icon">🔒</div>
     <div class="gate-title">Live Odds <span>Feed</span></div>
     <div class="gate-sub">Complete the security check to access live betting odds.</div>
-    <div class="cf-turnstile"
-         data-sitekey="0x4AAAAAACmF0GGxj-O-E8fO"
-         data-theme="dark"
-         data-callback="onTurnstileSuccess">
+
+    <!-- Behaviour checklist — mouse movement gates Turnstile -->
+    <div id="behaviour-checks">
+      <div class="bcheck" id="bc-move"><span class="bcheck-icon">○</span> Move your mouse to continue</div>
+    </div>
+
+    <!-- Turnstile hidden until all checks pass -->
+    <div id="turnstile-wrap">
+      <div class="cf-turnstile"
+           data-sitekey="0x4AAAAAACmF0GGxj-O-E8fO"
+           data-theme="dark"
+           data-callback="onTurnstileSuccess">
+      </div>
     </div>
     <div id="gate-msg"></div>
   </div>
@@ -209,7 +231,84 @@
   let sessionInterval = null;
   let sessionSeconds = 290;
   let prevOdds = {};
-  let _sessionCryptoKey = null; // AES-GCM key — lives only in JS memory, never in DOM
+  let _sessionCryptoKey = null;
+
+  // ── Behaviour collection ───────────────────────────────────────────
+  // Only requirement: cumulative mouse travel of MIN_MOUSE_DIST pixels.
+  // Keeps the UX completely invisible to real users while forcing
+  // attackers to simulate believable mouse movement in their script.
+  const MIN_MOUSE_DIST = 80; // px
+
+  const _bev = {
+    mouseDist: 0,
+    lastMX: null, lastMY: null,
+    nonce:    null,
+    allDone:  false,
+  };
+
+  function evaluateBehaviour() {
+    if (_bev.allDone) return;
+    const passed = _bev.mouseDist >= MIN_MOUSE_DIST;
+    const el = document.getElementById('bc-move');
+    if (passed && el && !el.classList.contains('done')) {
+      el.classList.add('done');
+      el.querySelector('.bcheck-icon').textContent = '✓';
+    }
+    if (passed) {
+      _bev.allDone = true;
+      unlockTurnstile();
+    }
+  }
+
+  document.addEventListener('mousemove', e => {
+    if (_bev.lastMX !== null) {
+      const dx = e.clientX - _bev.lastMX;
+      const dy = e.clientY - _bev.lastMY;
+      _bev.mouseDist += Math.sqrt(dx * dx + dy * dy);
+    }
+    _bev.lastMX = e.clientX;
+    _bev.lastMY = e.clientY;
+    evaluateBehaviour();
+  });
+
+  // ── Unlock Turnstile once behaviour is satisfied ───────────────────
+  async function unlockTurnstile() {
+    // Fetch a nonce from the server before revealing Turnstile.
+    // The nonce will be included in the behaviour proof so the server
+    // can verify it was issued to this session and not replayed.
+    try {
+      const res = await fetch('/nonce', {
+        method: 'GET',
+        headers: { 'X-Requested-With': 'BetStream-Web' }
+      });
+      const data = await res.json();
+      if (!data.nonce) return;
+      _bev.nonce = data.nonce;
+    } catch { return; }
+
+    document.getElementById('turnstile-wrap').classList.add('ready');
+  }
+
+  // ── Build behaviour proof to send with /verify ─────────────────────
+  // Proof payload: "moved:1|dist:NNN|ts:TTTT"
+  // Signed with HMAC(nonce, payload) — server validates signature,
+  // dist threshold, and timestamp freshness. Nonce is one-time use.
+  async function buildBehaviourProof() {
+    const dist = Math.floor(_bev.mouseDist);
+    const ts   = Math.floor(Date.now() / 1000);
+    const payload = `moved:1|dist:${dist}|ts:${ts}`;
+
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode(_bev.nonce),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(payload));
+    const sigHex = Array.from(new Uint8Array(sig))
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+
+    return { payload, sig: sigHex, nonce: _bev.nonce };
+  }
 
   // ── Turnstile ──────────────────────────────────────────────────────
   function onTurnstileSuccess(token) {
@@ -223,19 +322,21 @@
   }
 
   // ── Verify → stream token + session key ───────────────────────────
-  // /verify now returns { streamToken, sessionKey } where sessionKey is
-  // a hex-encoded 256-bit AES-GCM key derived server-side from HMAC.
-  // The key is transmitted once over TLS and then held only in memory —
-  // it never touches the DOM, localStorage, or any attribute.
   async function verifyAndConnect(token, isReauth) {
     try {
+      // Build and attach behaviour proof (skipped on reauth — already proven)
+      let behaviourProof = null;
+      if (!isReauth) {
+        behaviourProof = await buildBehaviourProof();
+      }
+
       const res = await fetch('/verify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Requested-With': 'BetStream-Web'
         },
-        body: JSON.stringify({ token })
+        body: JSON.stringify({ token, behaviourProof })
       });
 
       const data = await res.json();
