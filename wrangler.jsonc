@@ -1,5 +1,11 @@
 {
   "name": "datavault-test",
   "compatibility_date": "2025-09-27",
-  "pages_build_output_dir": "."
+  "pages_build_output_dir": ".",
+  "kv_namespaces": [
+    {
+      "binding": "NONCE_STORE",
+      "id": "2fd3c43522dc46ef8639d50f09edd8ee"
+    }
+  ]
 }
